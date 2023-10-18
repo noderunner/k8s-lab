@@ -610,7 +610,7 @@ To start using your cluster, you need to run the following as a regular user:
   sudo chown $(id -u):$(id -g) $HOME/.kube/config
 ```
 
-After running the above, it's worth taking a look at the `~/.kube/config` file to get a feel for what kinds of config parameters the `kubectl` tool needs in order to connect to the cluster and make API calls. You'll be working with KUBECONFIG files a lot.
+After running the above, it's worth taking a look at the `~/.kube/config` file to get a feel for what kinds of config parameters the `kubectl` tool needs in order to connect to the cluster and make API calls. You should also copy the same KUBECONFIG file to your hypervisor and install the `kubectl` binary on your hypervisor. That way you don't have to SSH into any of the cluster VM's to manage the cluster.
 
 Try a few quick `kubectl` commands to see if everything is working:
 ```
