@@ -1,4 +1,3 @@
-*/.terraform
-*/.terraform.lock.hcl
-*/*.ign
-libvirt_cluster/terraform/.terraform.lock.hcl
+**/.terraform
+**/.terraform.lock.hcl
+**/*.ign

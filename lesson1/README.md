@@ -90,6 +90,91 @@ If you don't already have an SSH keypair you want to use when logging into your 
 
 `ssh-keygen -t ecdsa`
 
+
+## Configure libvirt for Modular Daemons
+While libvirt supports multiple drivers for managing different types of virtual machines (VirtualBox, QEMU/KVM, LXC, etc.), it has recently transistion from a monolithic architecture where those drivers are built-in toward a more modular architecture where a separate libvirt{driver}d daemon is maintained for each type of driver. Most Linux distributions are switching to the modular runtime mode of libvirt by default, but some distros still running the default libvirtd.service.
+
+Here we will configure libvirtqemud as our modular daemon of choice, managed by systemd. More information about the monolithic vs. modular approach and different types of daemons available can be found in the libvirt documentaion: https://libvirt.org/daemons.html
+
+Running `systemctl status libvirtd.service` on my Fedora 38 system, I can see that the monolithic version of libvirtd is the current default on my system:
+
+```
+[mstevenson@fedora terraform-provider-libvirt]$ systemctl status libvirtd.service
+○ libvirtd.service - Virtualization daemon
+     Loaded: loaded (/usr/lib/systemd/system/libvirtd.service; enabled; preset: disabled)
+    Drop-In: /usr/lib/systemd/system/service.d
+             └─10-timeout-abort.conf
+     Active: inactive (dead) since Mon 2023-10-23 22:04:14 EDT; 1 week 4 days ago
+   Duration: 28.849s
+TriggeredBy: ● libvirtd-ro.socket
+             ● libvirtd.socket
+             ○ libvirtd-tls.socket
+             ○ libvirtd-tcp.socket
+             ● libvirtd-admin.socket
+       Docs: man:libvirtd(8)
+             https://libvirt.org
+    Process: 178343 ExecStart=/usr/sbin/libvirtd $LIBVIRTD_ARGS (code=exited, status=0/SUCCESS)
+   Main PID: 178343 (code=exited, status=0/SUCCESS)
+      Tasks: 2 (limit: 32768)
+     Memory: 7.4M
+        CPU: 168ms
+     CGroup: /system.slice/libvirtd.service
+             ├─176791 /usr/sbin/dnsmasq --conf-file=/var/lib/libvirt/dnsmasq/virbr10.conf --leasefile-ro --dhcp-script=/usr/lib>
+             └─176792 /usr/sbin/dnsmasq --conf-file=/var/lib/libvirt/dnsmasq/virbr10.conf --leasefile-ro --dhcp-script=/usr/lib>
+```
+
+I'll be following the "Switching to modular daemons" section of the [libvirt docs](https://libvirt.org/daemons.html) for configuring the more modular *libvirtqemud* service:
+
+1. Stop the current monolithic daemon and its socket units:
+```
+sudo systemctl stop libvirtd.service
+sudo systemctl stop libvirtd{,-ro,-admin,-tcp,-tls}.socket
+```
+
+2. For extra protection, I use systemd to *mask* instead of just disabling the above services so they do not accidentally get re-enabled:
+```
+sudo systemctl mask libvirtd.service
+sudo systemctl mask libvirtd{,-ro,-admin,-tcp,-tls}.socket
+```
+
+3. Enable the new daemons for the qemu driver, including secondary drivers to accompany it:
+```
+sudo su
+for drv in qemu interface network nodedev nwfilter secret storage; do
+systemctl unmask virt${drv}d.service
+systemctl unmask virt${drv}d{,-ro,-admin}.socket
+systemctl enable virt${drv}d.service
+systemctl enable virt${drv}d{,-ro,-admin}.socket
+done
+```
+
+4. Start the sockets for each daemon. There is no need to start the services, as they will get started by systemd when the first socket connection is established:
+
+```
+sudo su
+for drv in qemu network nodedev nwfilter secret storage; do
+systemctl start virt${drv}d{,-ro,-admin}.socket
+done
+```
+
+5. We will also enable the virtproxyd service. Not not because there is a need to support controlling libvirt remotely, but because virtproxyd will provide a compatibility layer for libvirt clients that insist on connecting to the UNIX socket at `/var/run/libvirt/libvirt-sock`. This will allow us to use tools like Terraform to provision virtual machines even though we plan to run virtqemud in non-privileged "session" mode.
+```
+sudo systemctl unmask virtproxyd.service
+sudo systemctl unmask virtproxyd{,-ro,-admin}.socket
+sudo systemctl enable virtproxyd.service
+sudo systemctl enable virtproxyd{,-ro,-admin}.socket
+sudo systemctl start virtproxyd{,-ro,-admin}.socket
+```
+
+6. If you actually do want to manage virtqemud remotely on your network, you should also enable `virtproxyd-tls` to provide a TLS-protected TCP socket for remote clients. I have no need for this, so I skip this step:
+
+```
+sudo systemctl unmask virtproxyd-tls.socket
+sudo systemctl enable virtproxyd-tls.socket
+sudo systemctl start virtproxyd-tls.socket
+```
+
+
 ## 3 - Create Ignition Scripts
 [Ignition](https://docs.fedoraproject.org/en-US/fedora-coreos/producing-ign/) is the tool FCOS uses during installation for setting up disks and writing files. We can pass scripts to Ignition when each of the FCOS virtual machines boot to help automate the installation of the Fedora Core OS on each of our 3 VM's so that we don't have to manually click through install menu's and enter information. This will obviously be much better and allow us to easily rebuild our VM's quickly whenever we want to change them.
 
